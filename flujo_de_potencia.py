@@ -10,22 +10,32 @@ import google.generativeai as genai
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="wide")
 
-# --- 2. CONFIGURACIÓN DE LA IA ---
+# --- 2. CONFIGURACIÓN DE LA IA (CON PARCHE ANTBG) ---
+model = None
 if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"].strip())
         model = genai.GenerativeModel('gemini-3-flash-preview')
     except Exception as e:
-        st.error(f"Error al configurar la IA: {e}")
+        st.error(f"Error al configurar la IA desde Secrets: {e}")
 else:
-    st.error("❌ Falta GEMINI_API_KEY en los Secrets de Streamlit.")
-    st.stop()
+    # Si la interfaz de Streamlit está mocha y no muestra los Secrets, habilita el plan B manual
+    api_key_manual = st.text_input("🔑 Streamlit Cloud no cargó los Secrets. Ingresa tu Gemini API Key manualmente aquí:", type="password")
+    if api_key_manual:
+        try:
+            genai.configure(api_key=api_key_manual.strip())
+            model = genai.GenerativeModel('gemini-3-flash-preview')
+        except Exception as e:
+            st.error(f"Error con la clave ingresada: {e}")
+            st.stop()
+    else:
+        st.warning("⚠️ Ingrese su API Key en el recuadro superior para habilitar el motor de análisis de la IA.")
 
 # --- 3. LÓGICA DE EXTRACCIÓN Y CONSTRUCCIÓN DE TABLAS ---
 def procesar_bloque_tabla(df, keyword, doc):
     """
     Busca las columnas que contienen la palabra clave, extrae el bloque de datos
-    y construye de forma limpia la tabla nativa dentro de Word.
+    y construye de forma limpia la tabla nativa dentro de Word de manera secuencial.
     """
     headers = df.columns.astype(str).tolist()
     columnas_coincidentes = [col for col in headers if keyword in col]
@@ -33,7 +43,6 @@ def procesar_bloque_tabla(df, keyword, doc):
     if not columnas_coincidentes:
         return None
         
-    # Extraer el sub-dataframe con las columnas que corresponden al bloque
     df_bloque = df[columnas_coincidentes].dropna(how='all').reset_index(drop=True)
     if df_bloque.empty:
         return None
@@ -53,7 +62,7 @@ def procesar_bloque_tabla(df, keyword, doc):
     tabla_word = doc.add_table(rows=len(df_bloque) + 1, cols=len(df_bloque.columns))
     tabla_word.style = 'Table Grid'
     
-    # Escribir los encabezados del bloque de forma limpia
+    # Escribir los encabezados del bloque
     for j, col_name in enumerate(df_bloque.columns):
         cell = tabla_word.cell(0, j)
         cell.text = str(col_name).replace(chr(10), ' ')
@@ -69,10 +78,9 @@ def procesar_bloque_tabla(df, keyword, doc):
         for j, val in enumerate(row):
             cell = tabla_word.cell(i + 1, j)
             
-            # Formatear números para evitar deformaciones
             if isinstance(val, float):
                 if "p.u." in df_bloque.columns[j] or "Tensión" in df_bloque.columns[j]:
-                    cell.text = f"{val:.1f}"  # Tensiones a 1 decimal como solicitaste
+                    cell.text = f"{val:.1f}"  # Redondeo de tensión a 1 decimal solicitado
                 else:
                     cell.text = f"{val:.2f}"
             else:
@@ -84,7 +92,7 @@ def procesar_bloque_tabla(df, keyword, doc):
                 run_cell.font.size = Pt(10)
                 run_cell.font.color.rgb = azul_corporativo
                 
-    doc.add_paragraph() # Espacio en blanco al final de la tabla
+    doc.add_paragraph()
     return df_bloque.to_markdown(index=False)
 
 # --- 4. INTERFAZ DE USUARIO ---
@@ -137,35 +145,37 @@ if uploaded_file is not None:
             
             df_sheet = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             
-            # Procesar cada sub-tabla individualmente para que no se mezclen las columnas
+            # Procesar e inyectar de forma nativa cada sub-tabla para que no se alteren
             contexto_escenario = ""
             for kw in ["Línea\n[MVA]", "Línea\n[kA]", "Transformador", "Barra"]:
                 tabla_md = procesar_bloque_tabla(df_sheet, kw, doc)
                 if tabla_md:
                     contexto_escenario += f"\n{tabla_md}\n"
             
-            # --- LLAMADA A GEMINI PARA ANÁLISIS ---
-            prompt_escenario = f"""
-            Actúa como un Ingeniero Consultor Senior en Sistemas Eléctricos de Potencia en Chile.
-            Analiza los siguientes resultados del escenario '{sheet_name}'.
-            
-            {contexto_escenario}
-            
-            Redacta un análisis técnico ejecutivo de máximo 2 párrafos sobre este escenario.
-            Criterios normativos:
-            1. Cargabilidades de Líneas y Transformadores deben ser <= 100%.
-            2. Voltajes en barras (< 200 kV) en estado estacionario deben estar entre 0.93 y 1.07 p.u.
-            """
-            
-            try:
-                response = model.generate_content(prompt_escenario)
-                analisis_texto = response.text
-            except Exception as e:
-                analisis_texto = f"Error al generar el análisis técnico: {e}"
+            # --- SOLICITUD DE ANÁLISIS A GEMINI (SÓLO SI EL MODELO ESTÁ ACTIVADO) ---
+            if model is not None:
+                prompt_escenario = f"""
+                Actúa como un Ingeniero Consultor Senior en Sistemas Eléctricos de Potencia en Chile.
+                Analiza los siguientes resultados del escenario '{sheet_name}'.
                 
-            # Pegar el comentario de la IA abajo de las tablas de este escenario
+                {contexto_escenario}
+                
+                Redacta un análisis técnico ejecutivo de máximo 2 párrafos sobre este escenario.
+                Criterios normativos:
+                1. Cargabilidades de Líneas y Transformadores deben ser <= 100%.
+                2. Voltajes en barras (< 200 kV) en estado estacionario deben estar entre 0.93 y 1.07 p.u.
+                """
+                try:
+                    response = model.generate_content(prompt_escenario)
+                    analisis_texto = response.text
+                except Exception as e:
+                    analisis_texto = f"Error al generar el análisis técnico: {e}"
+            else:
+                analisis_texto = "Análisis omitido. No se ingresó una API Key válida para ejecutar el motor de IA."
+
+            # Pegar la respuesta del análisis abajo de las tablas físicas del escenario
             p_analisis = doc.add_paragraph()
-            run_analisis = p_analisis.add_run(f"Evaluación de la IA:\n{analisis_texto}")
+            run_analisis = p_analisis.add_run(f"Evaluación Técnica:\n{analisis_texto}")
             run_analisis.font.name = 'Ubuntu'
             run_analisis.font.size = Pt(18)
             run_analisis.font.color.rgb = RGBColor(0, 76, 95)
@@ -177,15 +187,17 @@ if uploaded_file is not None:
             contexto_para_conclusion += f"\n--- Escenario {sheet_name} ---\n{analisis_texto}\n"
             progress_bar.progress((index + 1) / total_sheets)
             
-        # --- GENERAR CONCLUSIÓN GENERAL ---
-        status_text.write("Redactando Conclusión General del Estudio...")
-        prompt_conclusion = f"Basado en los siguientes análisis de escenarios, redacta las Conclusiones y Recomendaciones Generales en un tono altamente corporativo:\n{contexto_para_conclusion}"
-        
-        try:
-            response_conclusion = model.generate_content(prompt_conclusion)
-            conclusion_texto = response_conclusion.text
-        except Exception as e:
-            conclusion_texto = f"No se pudo compilar la conclusión automáticamente: {e}"
+        # --- GENERAR CONCLUSIÓN GENERAL DE CIERRE ---
+        if model is not None:
+            status_text.write("Redactando Conclusión General del Estudio...")
+            prompt_conclusion = f"Basado en los siguientes análisis de escenarios, redacta las Conclusiones y Recomendaciones Generales en un tono altamente corporativo:\n{contexto_para_conclusion}"
+            try:
+                response_conclusion = model.generate_content(prompt_conclusion)
+                conclusion_texto = response_conclusion.text
+            except Exception as e:
+                conclusion_texto = f"No se pudo compilar la conclusión automáticamente: {e}"
+        else:
+            conclusion_texto = "Conclusión general no generada por falta de credenciales de IA."
             
         doc.add_page_break()
         p_c_title = doc.add_paragraph()
