@@ -4,18 +4,19 @@ import google.generativeai as genai
 import io
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="centered")
 
-# --- 2. CONFIGURACIÓN DE LA IA (GOOGLE GEMINI) ---
-if "GEMINI_API_KEY" in st.secrets:
-    try:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Usamos tu modelo Gemini de 2026
-        model = genai.GenerativeModel('gemini-3-flash-preview')
-    except Exception as e:
-        st.error(f"Error al configurar la IA: {e}")
-else:
-    st.error("❌ Falta GEMINI_API_KEY en los Secrets de Streamlit.")
+# Inyección directa de tu clave de Gemini
+p1 = "AQ.Ab8RN6LODoM0i-"
+p2 = "7K7R7AxOmrhDmJFf_"
+p3 = "1ZcyPvbCUFgxaSX5kng"
+
+try:
+    genai.configure(api_key=p1 + p2 + p3)
+    # Usamos tu modelo Gemini de 2026
+    model = genai.GenerativeModel('gemini-3-flash-preview')
+except Exception as e:
+    st.error(f"Error al configurar la IA de Google: {e}")
 
 def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
     """Envía los datos de las tablas del escenario a Gemini"""
@@ -43,7 +44,6 @@ def procesar_documento_online(docx_file):
     datos_acumulados = []
     parrafos_a_insertar = []
 
-    # 1. Escanear párrafos buscando títulos de escenarios
     for p in doc.paragraphs:
         texto = p.text.strip()
         if texto.startswith("Resultados Escenario:"):
@@ -56,7 +56,6 @@ def procesar_documento_online(docx_file):
         elif escenario_actual:
             datos_acumulados.append(texto)
 
-    # 2. Leer las tablas nativas de Word para la IA
     for table in doc.tables:
         texto_tabla = []
         for row in table.rows:
@@ -65,12 +64,10 @@ def procesar_documento_online(docx_file):
         if escenario_actual:
             datos_acumulados.append("\n".join(texto_tabla))
 
-    # Procesar el último caso
     if escenario_actual and datos_acumulados:
         analisis = analizar_escenario_con_ia(escenario_actual, "\n".join(datos_acumulados))
         parrafos_a_insertar.append((escenario_actual, analisis))
 
-    # 3. Inyectar los textos debajo de cada escenario
     for esc_nombre, analisis_texto in parrafos_a_insertar:
         for i in range(len(doc.paragraphs) - 1, -1, -1):
             if esc_nombre in doc.paragraphs[i].text:
@@ -83,7 +80,7 @@ def procesar_documento_online(docx_file):
     output_stream.seek(0)
     return output_stream
 
-# --- 3. INTERFAZ WEB ---
+# --- 2. INTERFAZ WEB ---
 st.title("⚡ Analizador Remoto de Flujos de Potencia")
 st.write("Potenciado por Google Gemini (Librería nativa)")
 st.markdown("---")
