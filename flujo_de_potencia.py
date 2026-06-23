@@ -24,7 +24,7 @@ def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
     1. ANÁLISIS TÉCNICO COMPLETO: Evalúa la cargabilidad de líneas (MVA y kA), transformadores y perfiles de voltaje en barras (p.u.). Sé específico si detectas anomalías o instalaciones críticas.
     2. CONCLUSIÓN DEL ESCENARIO: Resume de forma ejecutiva la condición operativa del sistema en este caso.
     
-    Escribe directamente el análisis de forma fluida, profesional y formal. No agregues introducciones ni saludos.
+    Escribe directamente el análisis de forma fluida, profesional and formal. No agregues introducciones ni saludos.
     """
     try:
         response = client.chat.completions.create(
