@@ -1,20 +1,24 @@
 import streamlit as st
 from docx import Document
-from openai import OpenAI
+import google.generativeai as genai
 import io
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="centered")
+# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="wide")
 
-# Causa raíz resuelta: Clave directa inyectada sin pasar por paneles de Streamlit
-# El string está reconstruido para pasar los filtros automáticos de GitHub
-parte1 = "sk-proj-0cEAuNz2hOB-Zbz3WgWIelWScnk49AifujUssHLLEJjZQsQ19X66yG5p"
-parte2 = "lwrMbxNxAnBy6UTJXKT3BlbkFJgrO-2LGlqzwXfM4W_KoGl-7irOM0v9Do83iD"
-parte3 = "gzTpLeKiHqD0NH6tNYX1M2Js8jiF4uHSZX2NYA"
-
-client = OpenAI(api_key=parte1 + parte2 + parte3)
+# --- 2. CONFIGURACIÓN DE LA IA (GOOGLE GEMINI) ---
+if "GEMINI_API_KEY" in st.secrets:
+    try:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        # Usamos tu modelo Gemini de 2026
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+    except Exception as e:
+        st.error(f"Error al configurar la IA: {e}")
+else:
+    st.error("❌ Falta GEMINI_API_KEY en los Secrets de Streamlit.")
 
 def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
+    """Envía los datos de las tablas del escenario a Gemini"""
     prompt = f"""
     Actúa como un Ingeniero Senior de Planificación de Sistemas Eléctricos de Potencia.
     Analiza el comportamiento operativo del escenario '{nombre_escenario}' basado en los datos de sus tablas de resultados:
@@ -28,12 +32,8 @@ def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
     Escribe directamente el análisis de forma fluida, profesional y formal. No agregues introducciones ni saludos.
     """
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-        return response.choices[0].message.content
+        response = model.generate_content(prompt)
+        return response.text
     except Exception as e:
         return f"Error en el análisis de IA: {str(e)}"
 
@@ -43,17 +43,20 @@ def procesar_documento_online(docx_file):
     datos_acumulados = []
     parrafos_a_insertar = []
 
+    # 1. Escanear párrafos buscando títulos de escenarios
     for p in doc.paragraphs:
         texto = p.text.strip()
         if texto.startswith("Resultados Escenario:"):
             if escenario_actual and datos_acumulados:
                 analisis = analizar_escenario_con_ia(escenario_actual, "\n".join(datos_acumulados))
                 parrafos_a_insertar.append((escenario_actual, analisis))
+            
             escenario_actual = texto.replace("Resultados Escenario:", "").strip()
             datos_acumulados = []
         elif escenario_actual:
             datos_acumulados.append(texto)
 
+    # 2. Leer las tablas nativas de Word para la IA
     for table in doc.tables:
         texto_tabla = []
         for row in table.rows:
@@ -62,10 +65,12 @@ def procesar_documento_online(docx_file):
         if escenario_actual:
             datos_acumulados.append("\n".join(texto_tabla))
 
+    # Procesar el último caso
     if escenario_actual and datos_acumulados:
         analisis = analizar_escenario_con_ia(escenario_actual, "\n".join(datos_acumulados))
         parrafos_a_insertar.append((escenario_actual, analisis))
 
+    # 3. Inyectar los textos debajo de cada escenario
     for esc_nombre, analisis_texto in parrafos_a_insertar:
         for i in range(len(doc.paragraphs) - 1, -1, -1):
             if esc_nombre in doc.paragraphs[i].text:
@@ -78,19 +83,20 @@ def procesar_documento_online(docx_file):
     output_stream.seek(0)
     return output_stream
 
-# --- INTERFAZ ---
+# --- 3. INTERFAZ WEB ---
 st.title("⚡ Analizador Remoto de Flujos de Potencia")
-st.write("Sube el Word (.docx) generado por tu macro.")
+st.write("Potenciado por Google Gemini (Librería nativa)")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("Carga tu archivo Word (.docx)", type=["docx"])
 
 if uploaded_file is not None:
     if st.button("🚀 Iniciar Análisis Completo"):
-        with st.spinner("La IA está analizando los escenarios..."):
+        with st.spinner("Gemini está analizando los escenarios eléctricos..."):
             try:
                 word_comentado = procesar_documento_online(uploaded_file)
-                st.success("¡Informe procesado!")
+                st.success("¡Informe procesado con éxito!")
+                
                 st.download_button(
                     label="📥 Descargar Word con Conclusiones de IA",
                     data=word_comentado,
@@ -98,4 +104,4 @@ if uploaded_file is not None:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as e:
-                st.error(f"Error: {str(e)}")
+                st.error(f"Error en el servidor: {str(e)}")
