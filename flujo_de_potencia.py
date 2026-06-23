@@ -3,13 +3,17 @@ from docx import Document
 from openai import OpenAI
 import io
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
+# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="centered")
 
-# Configuración de tu API Key de OpenAI real (Inyectada directamente)
-client = OpenAI(api_key="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")
+# LLAMADO SEGURO A LA API KEY (Evita el bloqueo automático de OpenAI)
+try:
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+except Exception as e:
+    st.error("Falta configurar la API Key en los Secrets de Streamlit. Revisa el panel lateral.")
 
 def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
+    """Envía los datos de las tablas del escenario a la IA para el análisis de ingeniería"""
     prompt = f"""
     Actúa como un Ingeniero Senior de Planificación de Sistemas Eléctricos de Potencia.
     Analiza el comportamiento operativo del escenario '{nombre_escenario}' basado en los datos de sus tablas de resultados:
@@ -33,11 +37,14 @@ def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
         return f"Error en el análisis de IA: {str(e)}"
 
 def procesar_documento_online(docx_file):
+    # Cargar el archivo Word desde la memoria del servidor de Streamlit
     doc = Document(docx_file)
+    
     escenario_actual = None
     datos_acumulados = []
     parrafos_a_insertar = []
 
+    # 1. Escanear párrafos buscando títulos de escenarios
     for p in doc.paragraphs:
         texto = p.text.strip()
         if texto.startswith("Resultados Escenario:"):
@@ -50,6 +57,7 @@ def procesar_documento_online(docx_file):
         elif escenario_actual:
             datos_acumulados.append(texto)
 
+    # 2. Leer las tablas nativas de Word para la IA
     for table in doc.tables:
         texto_tabla = []
         for row in table.rows:
@@ -58,10 +66,12 @@ def procesar_documento_online(docx_file):
         if escenario_actual:
             datos_acumulados.append("\n".join(texto_tabla))
 
+    # Procesar el último caso del archivo
     if escenario_actual and datos_acumulados:
         analisis = analizar_escenario_con_ia(escenario_actual, "\n".join(datos_acumulados))
         parrafos_a_insertar.append((escenario_actual, analisis))
 
+    # 3. Inyectar los textos generados por la IA debajo de cada escenario
     for esc_nombre, analisis_texto in parrafos_a_insertar:
         for i in range(len(doc.paragraphs) - 1, -1, -1):
             if esc_nombre in doc.paragraphs[i].text:
@@ -69,24 +79,25 @@ def procesar_documento_online(docx_file):
                 p_analisis.text = f"\nAnálisis Técnico de IA - Escenario {esc_nombre}:\n{analisis_texto}\n"
                 break
 
+    # Guardar en memoria virtual binaria para habilitar la descarga
     output_stream = io.BytesIO()
     doc.save(output_stream)
     output_stream.seek(0)
     return output_stream
 
-# --- INTERFAZ EN LA NUBE ---
+# --- 2. INTERFAZ WEB ---
 st.title("⚡ Analizador Remoto de Flujos de Potencia")
-st.write("Sube el Word (.docx) con las 4 tablas por escenario. La IA añadirá los comentarios abajo de cada uno.")
+st.write("Sube el archivo Word (.docx) generado por tu macro para adjuntarle los análisis técnicos del servidor de IA.")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("Carga tu archivo Word (.docx)", type=["docx"])
 
 if uploaded_file is not None:
     if st.button("🚀 Iniciar Análisis Completo"):
-        with st.spinner("La IA de la nube está analizando los escenarios eléctricos..."):
+        with st.spinner("La IA remota está analizando los escenarios eléctricos..."):
             try:
                 word_comentado = procesar_documento_online(uploaded_file)
-                st.success("¡Análisis inyectado con éxito!")
+                st.success("¡Informe procesado con éxito!")
                 
                 st.download_button(
                     label="📥 Descargar Word con Conclusiones de IA",
