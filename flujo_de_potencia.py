@@ -1,64 +1,91 @@
 import streamlit as st
 import pandas as pd
 import io
-import os
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
-import google.generativeai as genai
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="wide")
 
-# --- 2. CONFIGURACIÓN DE LA IA (PARCHE POR BUG DE INTERFAZ) ---
-if "GEMINI_API_KEY" in st.secrets:
-    try:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-3-flash-preview')
-    except Exception as e:
-        st.error(f"Error al configurar la IA: {e}")
-else:
-    # Plan B en pantalla si la interfaz de Streamlit Cloud no muestra la caja negra
-    api_key_manual = st.text_input("🔑 Streamlit Cloud está bugeado. Merte la Gemini API Key manualmente aquí:", type="password")
-    if api_key_manual:
-        try:
-            genai.configure(api_key=api_key_manual)
-            model = genai.GenerativeModel('gemini-3-flash-preview')
-        except Exception as e:
-            st.error(f"Error con la clave ingresada: {e}")
-            st.stop()
-    else:
-        st.warning("⚠️ Por favor, ingresa la API Key para activar los análisis.")
-        st.stop()
-
-# --- 3. LÓGICA AUXILIAR DE PROCESAMIENTO ---
-def extraer_tablas_de_hoja(df):
+# --- 2. LÓGICA DE EXTRACCIÓN Y CONSTRUCCIÓN DE TABLAS NATIVAS ---
+def procesar_y_dibujar_tablas(df, doc):
     """
-    Escanea la hoja (escenario) identificando las columnas y los bloques de datos 
-    mediante las palabras clave de potencia, corriente, transformadores y barras.
+    Busca los bloques de datos en la hoja de Excel según tus encabezados reales
+    y los dibuja uno a uno de forma nativa en el documento Word.
     """
-    resumen_bloques = ""
     keywords = ["Línea\n[MVA]", "Línea\n[kA]", "Transformador", "Barra"]
-    
     headers = df.columns.astype(str).tolist()
+    azul_corporativo = RGBColor(0, 76, 95)
+    
+    tablas_procesadas = 0
     
     for keyword in keywords:
+        # Identificar las columnas que pertenecen a este bloque
         columnas_coincidentes = [col for col in headers if keyword in col]
         
         if columnas_coincidentes:
-            resumen_bloques += f"\n### TABLA ENCONTRADA: {keyword.replace(chr(10), ' ')}\n"
-            df_bloque = df[columnas_coincidentes].dropna(how='all')
-            resumen_bloques += df_bloque.to_markdown(index=False) + "\n"
+            tablas_procesadas += 1
+            nombre_tabla = keyword.replace(chr(10), ' ')
             
-    if not resumen_bloques:
-        resumen_bloques = df.dropna(how='all').to_markdown(index=False)
-        
-    return resumen_bloques
+            # Filtrar el sub-dataframe de la tabla eliminando filas completamente vacías
+            df_bloque = df[columnas_coincidentes].dropna(how='all')
+            
+            # Título de la Tabla en el Word
+            p_nom_tabla = doc.add_paragraph()
+            run_nt = p_nom_tabla.add_run(f"Tabla: {nombre_tabla}")
+            run_nt.font.name = 'Ubuntu'
+            run_nt.font.size = Pt(14)
+            run_nt.font.bold = True
+            run_nt.font.color.rgb = azul_corporativo
+            
+            # Crear estructura de la tabla nativa (filas = datos + cabecera, columnas)
+            tabla_word = doc.add_table(rows=len(df_bloque) + 1, cols=len(df_bloque.columns))
+            tabla_word.style = 'Table Grid'
+            
+            # 1. Escribir los encabezados en la primera fila de la tabla
+            for j, col_name in enumerate(df_bloque.columns):
+                cell = tabla_word.cell(0, j)
+                cell.text = str(col_name).replace(chr(10), ' ')
+                # Formato del encabezado de la tabla
+                if cell.paragraphs[0].runs:
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'Ubuntu'
+                    run.font.size = Pt(12)
+                    run.font.bold = True
+                    run.font.color.rgb = azul_corporativo
+                
+            # 2. Escribir las filas con los datos técnicos
+            for i, row in enumerate(df_bloque.itertuples(index=False)):
+                for j, val in enumerate(row):
+                    cell = tabla_word.cell(i + 1, j)
+                    
+                    # Formatear el despliegue numérico
+                    if isinstance(val, float):
+                        # Si es columna de tensión o p.u., dejar con 1 decimal como pediste
+                        if "Tensión" in df_bloque.columns[j] or "p.u." in df_bloque.columns[j]:
+                            cell.text = f"{val:.1f}"
+                        else:
+                            cell.text = f"{val:.2f}"
+                    else:
+                        cell.text = str(val) if pd.notna(val) else ""
+                    
+                    # Formato de las celdas de datos
+                    if cell.paragraphs[0].runs:
+                        run_cell = cell.paragraphs[0].runs[0]
+                        run_cell.font.name = 'Ubuntu'
+                        run_cell.font.size = Pt(11)
+                        run_cell.font.color.rgb = azul_corporativo
+            
+            # Añadir un espacio de separación después de la tabla
+            doc.add_paragraph()
+            
+    return tablas_procesadas
 
-# --- 4. INTERFAZ DE USUARIO ---
+# --- 3. INTERFAZ DE USUARIO ---
 st.title("⚡ Plataforma Flujo de Potencia")
-st.write("Potenciado por Gemini 3 Flash Preview")
+st.write("Estructuración y generación nativa de reportes técnicos de simulación.")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("Selecciona el archivo Excel de Resultados (EFP_RES_...)", type=["xlsx"])
@@ -67,16 +94,16 @@ if uploaded_file is not None:
     try:
         excel_file = pd.ExcelFile(uploaded_file)
         sheet_names = excel_file.sheet_names
-        st.success(f"📂 Archivo cargado correctamente. Se detectaron {len(sheet_names)} escenarios de estudio.")
+        st.success(f"📂 Archivo cargado correctamente. Se detectaron {len(sheet_names)} escenarios (hojas) para procesar.")
     except Exception as e:
         st.error(f"Error al leer el archivo Excel: {e}")
         st.stop()
 
-    if st.button("🚀 Ejecutar Análisis y Generar Informe"):
+    if st.button("🚀 Generar Tablas en Documento Word"):
         
         doc = Document()
         
-        # Configurar formato: Fuente Ubuntu, Tamaño 18, Color #004C5F
+        # Configurar formato base del documento: Ubuntu, Tamaño 18, Color Azul Oscuro #004C5F
         style = doc.styles['Normal']
         font = style.font
         font.name = 'Ubuntu'
@@ -87,13 +114,12 @@ if uploaded_file is not None:
         status_text = st.empty()
         
         total_sheets = len(sheet_names)
-        contexto_para_conclusion = ""
 
-        # Procesar cada hoja del Excel (Escenarios independientes)
+        # Recorrer cada hoja (Escenario) del archivo de entrada
         for index, sheet_name in enumerate(sheet_names):
-            status_text.write(f"Procesando Escenario: **{sheet_name}** ({index + 1}/{total_sheets})...")
+            status_text.write(f"Dibujando tablas del Escenario: **{sheet_name}** ({index + 1}/{total_sheets})...")
             
-            # Título de la sección en Word
+            # Título de la sección del Escenario
             p_title = doc.add_paragraph()
             run_title = p_title.add_run(f"Resultados {sheet_name}")
             run_title.font.size = Pt(18)
@@ -101,101 +127,33 @@ if uploaded_file is not None:
             run_title.font.name = 'Ubuntu'
             run_title.font.color.rgb = RGBColor(0, 76, 95)
             
+            # Forzar fondo blanco
             pPr = p_title._p.get_or_add_pPr()
-            shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>')
-            pPr.append(shd)
+            pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
             
+            # Leer los datos de la hoja actual
             df_sheet = pd.read_excel(uploaded_file, sheet_name=sheet_name)
-            contexto_tablas = extraer_tablas_de_hoja(df_sheet)
             
-            # Prompt de auditoría eléctrica adaptado a la regulación chilena
-            prompt_escenario = f"""
-            Actúa como un Ingeniero Consultor Senior en Sistemas Eléctricos de Potencia en Chile.
-            Analiza rigurosamente los siguientes resultados de flujo de potencia del escenario '{sheet_name}'.
+            # Llamar a la función para incrustar las tablas del escenario actual
+            procesar_y_dibujar_tablas(df_sheet, doc)
             
-            Información técnica del escenario (Markdown):
-            {contexto_tablas}
-            
-            Redacta un análisis técnico estructurado y ejecutivo (máximo 2 párrafos) sobre la condición operativa de este escenario.
-            Criterios normativos a verificar en los datos:
-            1. Cargabilidad de Líneas (tanto en la tabla de MVA como en la de kA) y Transformadores: Deben ser inferiores o iguales al 100%. Reporta cualquier sobrecarga si los porcentajes superan este límite.
-            2. Regulación de Tensión en Barras: En sistemas menores a 200 kV (como las redes de 110 kV presentes), la tensión bajo régimen estacionario (p.u.) debe mantenerse estrictamente entre 0.93 p.u. y 1.07 p.u.
-            
-            Si todas las variables se encuentran en rangos de operación segura, confírmalo formalmente.
-            """
-            
-            try:
-                response = model.generate_content(prompt_escenario)
-                analisis_texto = response.text
-            except Exception as e:
-                analisis_texto = f"Error al generar el análisis automático: {e}"
-            
-            # Escribir evaluación en el archivo Word
-            p_analisis = doc.add_paragraph()
-            run_analisis = p_analisis.add_run(analisis_texto)
-            run_analisis.font.name = 'Ubuntu'
-            run_analisis.font.size = Pt(18)
-            run_analisis.font.color.rgb = RGBColor(0, 76, 95)
-            p_analisis.paragraph_format.space_after = Pt(18)
-            
-            pPr_a = p_analisis._p.get_or_add_pPr()
-            pPr_a.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
-            
-            contexto_para_conclusion += f"\n--- Escenario {sheet_name} ---\n{analisis_texto}\n"
+            # Separador estético antes del siguiente escenario
+            p_sep = doc.add_paragraph()
+            p_sep.paragraph_format.space_after = Pt(24)
             
             progress_bar.progress((index + 1) / total_sheets)
         
-        # Conclusiones Generales
-        status_text.write("Redactando Conclusión General del Estudio...")
-        
-        prompt_conclusion = f"""
-        Tomando en cuenta los resultados de todas las contingencias y escenarios analizados anteriormente, 
-        redacta la sección de 'Conclusiones y Recomendaciones' definitiva para este informe de flujo de potencia.
-        
-        Historial de evaluaciones por escenario:
-        {contexto_para_conclusion}
-        
-        Entrega una respuesta con un tono altamente corporativo, formal y de nivel auditoría de ingeniería.
-        """
-        
-        try:
-            response_conclusion = model.generate_content(prompt_conclusion)
-            conclusion_texto = response_conclusion.text
-        except Exception as e:
-            conclusion_texto = f"No se pudo compilar la conclusión automáticamente: {e}"
-            
-        # Añadir bloque final de Conclusiones al Word
-        doc.add_page_break()
-        p_c_title = doc.add_paragraph()
-        run_c_title = p_c_title.add_run("Conclusiones y Recomendaciones Generales")
-        run_c_title.font.size = Pt(18)
-        run_c_title.font.bold = True
-        run_c_title.font.name = 'Ubuntu'
-        run_c_title.font.color.rgb = RGBColor(0, 76, 95)
-        
-        pPr_c = p_c_title._p.get_or_add_pPr()
-        pPr_c.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
-        
-        p_c_text = doc.add_paragraph()
-        run_c_text = p_c_text.add_run(conclusion_texto)
-        run_c_text.font.name = 'Ubuntu'
-        run_c_text.font.size = Pt(18)
-        run_c_text.font.color.rgb = RGBColor(0, 76, 95)
-        
-        pPr_ct = p_c_text._p.get_or_add_pPr()
-        pPr_ct.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
-        
-        # Guardar en memoria para descarga remota
+        # Guardar el archivo estructurado en la memoria RAM para la descarga
         docx_buffer = io.BytesIO()
         doc.save(docx_buffer)
         docx_buffer.seek(0)
         
-        status_text.success("✨ ¡Informe técnico de Flujo de Potencia generado con éxito!")
+        status_text.success("✨ ¡El documento con las tablas nativas se ha generado correctamente!")
         
         st.download_button(
-            label="📥 Descargar Informe Técnico (.docx)",
+            label="📥 Descargar Informe con Tablas (.docx)",
             data=docx_buffer,
-            file_name="Informe_Tecnico_Flujo_de_Potencia.docx",
+            file_name="Informe_Estructurado_Flujo_de_Potencia.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
