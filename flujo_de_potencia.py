@@ -17,7 +17,7 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
     """
     azul_corporativo = RGBColor(0, 76, 95)
     
-    # Mapeo idéntico de palabras clave de tu macro
+    # Mapeo de palabras clave de las columnas del Excel
     titleMapping = {
         "Línea\n[MVA]": "Cargabilidad Líneas (MVA)",
         "Línea\n[kA]": "Cargabilidad Líneas (kA)",
@@ -25,7 +25,7 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
         "Barra": "Regulación de tensión"
     }
     
-    # Título principal del escenario en el Word
+    # Título del escenario en el Word
     p_title = doc.add_paragraph()
     run_title = p_title.add_run(f"Resultados {sheet_name}")
     run_title.font.size = Pt(18)
@@ -43,12 +43,12 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
         if columnas_bloque:
             idx_inicio = columnas_bloque[0]
             
-            # El bloque se extiende horizontalmente hasta una columna vacía (NaN)
+            # El bloque se extiende horizontalmente hasta una columna vacía
             idx_fin = idx_inicio
             while idx_fin < len(df.columns) and not df.iloc[:, idx_fin].isna().all():
                 idx_fin += 1
                 
-            # Extraer el sub-dataframe exacto
+            # Extraer el bloque exacto de columnas
             df_sub_tabla = df.iloc[:, idx_inicio:idx_fin].dropna(how='all').reset_index(drop=True)
             
             if not df_sub_tabla.empty:
@@ -75,7 +75,7 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
                         run.font.bold = True
                         run.font.color.rgb = azul_corporativo
                 
-                # 2. Escribir celdas de datos con formato controlado
+                # 2. Escribir celdas de datos
                 for i, row in enumerate(df_sub_tabla.itertuples(index=False)):
                     for j, val in enumerate(row):
                         cell = tabla_word.cell(i + 1, j)
@@ -94,7 +94,6 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
                             run_cell.font.size = Pt(10)
                             run_cell.font.color.rgb = azul_corporativo
                             
-                # Espacio de separación tras la tabla
                 doc.add_paragraph()
 
 # --- 3. INTERFAZ DE USUARIO ---
@@ -133,7 +132,6 @@ if uploaded_file is not None:
             status_text.write(f"Procesando tablas del Escenario: **{sheet_name}**...")
             df_sheet = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             
-            # Ejecuta la separación y dibujo ordenado
             extraer_y_dibujar_bloques_reales(df_sheet, doc, sheet_name)
             
             if index < total_sheets - 1:
