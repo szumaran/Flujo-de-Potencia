@@ -20,7 +20,7 @@ if "GEMINI_API_KEY" in st.secrets:
         st.error(f"Error al configurar la IA: {e}")
 else:
     # Plan B en pantalla si la interfaz de Streamlit Cloud no muestra la caja negra
-    api_key_manual = st.text_input("🔑 Streamlit Cloud está bugeado. Ingresa tu Gemini API Key manualmente aquí:", type="password")
+    api_key_manual = st.text_input("🔑 Streamlit Cloud está bugeado. Merte la Gemini API Key manualmente aquí:", type="password")
     if api_key_manual:
         try:
             genai.configure(api_key=api_key_manual)
@@ -197,10 +197,6 @@ if uploaded_file is not None:
             data=docx_buffer,
             file_name="Informe_Tecnico_Flujo_de_Potencia.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-
-st.markdown("---")
-st.caption("© 2026 Plataforma Flujo de Potencia - Ingeniería Eléctrica")
         )
 
 st.markdown("---")
