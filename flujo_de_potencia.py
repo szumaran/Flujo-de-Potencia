@@ -12,12 +12,12 @@ st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", l
 # --- 2. LÓGICA DE EXTRACCIÓN HORIZONTAL Y DIBUJO DE TABLAS ---
 def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
     """
-    Busca de forma exacta las sub-tablas distribuidas horizontalmente en tu Excel
-    y las plasma en Word con el formato visual corporativo limpio.
+    Identifica los bloques distribuidos horizontalmente en el Excel 
+    y los estructura de forma nativa en Word sin mezclar columnas.
     """
     azul_corporativo = RGBColor(0, 76, 95)
     
-    # Mapeo idéntico de palabras clave y sus títulos de tu macro de VBA
+    # Mapeo idéntico de palabras clave de tu macro
     titleMapping = {
         "Línea\n[MVA]": "Cargabilidad Líneas (MVA)",
         "Línea\n[kA]": "Cargabilidad Líneas (kA)",
@@ -25,7 +25,7 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
         "Barra": "Regulación de tensión"
     }
     
-    # Título principal del Escenario en el Word (Líneas 5-6 de tu VBA original)
+    # Título principal del escenario en el Word
     p_title = doc.add_paragraph()
     run_title = p_title.add_run(f"Resultados {sheet_name}")
     run_title.font.size = Pt(18)
@@ -36,24 +36,23 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
     pPr = p_title._p.get_or_add_pPr()
     pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
     
-    # Analizar el archivo buscando cada bloque por su columna de inicio
+    # Buscar cada bloque horizontal por su columna inicial
     for kw, titulo_tabla in titleMapping.items():
-        # Encontrar los índices de las columnas que contienen la palabra clave
         columnas_bloque = [i for i, col in enumerate(df.columns) if kw in str(col)]
         
         if columnas_bloque:
             idx_inicio = columnas_bloque[0]
             
-            # Un bloque dura horizontalmente hasta encontrar una columna vacía (NaN)
+            # El bloque se extiende horizontalmente hasta una columna vacía (NaN)
             idx_fin = idx_inicio
             while idx_fin < len(df.columns) and not df.iloc[:, idx_fin].isna().all():
                 idx_fin += 1
                 
-            # Extraer el trozo exacto de la tabla horizontal sin mezclar columnas ajenas
+            # Extraer el sub-dataframe exacto
             df_sub_tabla = df.iloc[:, idx_inicio:idx_fin].dropna(how='all').reset_index(drop=True)
             
             if not df_sub_tabla.empty:
-                # Título estilo CAPTION arriba de la tabla (Exactamente como tu macro)
+                # Título estilo CAPTION arriba de la tabla nativa
                 p_nom = doc.add_paragraph()
                 run_nom = p_nom.add_run(f"Tabla: Resultados {titulo_tabla} - {sheet_name}")
                 run_nom.font.name = 'Ubuntu'
@@ -65,7 +64,7 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
                 tabla_word = doc.add_table(rows=len(df_sub_tabla) + 1, cols=len(df_sub_tabla.columns))
                 tabla_word.style = 'Table Grid'
                 
-                # 1. Escribir los encabezados reales de las columnas
+                # 1. Escribir encabezados
                 for j, col_name in enumerate(df_sub_tabla.columns):
                     cell = tabla_word.cell(0, j)
                     cell.text = str(col_name).replace(chr(10), ' ')
@@ -76,17 +75,16 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
                         run.font.bold = True
                         run.font.color.rgb = azul_corporativo
                 
-                # 2. Escribir las celdas de datos con formato numérico limpio
+                # 2. Escribir celdas de datos con formato controlado
                 for i, row in enumerate(df_sub_tabla.itertuples(index=False)):
                     for j, val in enumerate(row):
                         cell = tabla_word.cell(i + 1, j)
                         
-                        # Controlar el redondeo de decimales para evitar deformaciones
                         if isinstance(val, float):
                             if "p.u." in str(df_sub_tabla.columns[j]) or "Tensión" in str(df_sub_tabla.columns[j]):
-                                cell.text = f"{val:.1f}"  # 1 decimal para tensiones
+                                cell.text = f"{val:.1f}"  # 1 decimal para voltajes
                             else:
-                                cell.text = f"{val:.2f}"  # 2 decimales para cargabilidades
+                                cell.text = f"{val:.2f}"  # 2 decimales para cargas
                         else:
                             cell.text = str(val) if pd.notna(val) else ""
                             
@@ -96,12 +94,12 @@ def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
                             run_cell.font.size = Pt(10)
                             run_cell.font.color.rgb = azul_corporativo
                             
-                # Espacio de separación después de cada bloque de tabla
+                # Espacio de separación tras la tabla
                 doc.add_paragraph()
 
 # --- 3. INTERFAZ DE USUARIO ---
 st.title("⚡ Plataforma Flujo de Potencia")
-st.write("Extractor automático de simulación. Organiza los bloques horizontales directamente en tu Word oficial.")
+st.write("Estructurador automático de reportes de simulación.")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("Selecciona el archivo Excel de Resultados (EFP_RES_...)", type=["xlsx"])
@@ -119,7 +117,7 @@ if uploaded_file is not None:
         
         doc = Document()
         
-        # Formato de texto base por defecto
+        # Formato base
         style = doc.styles['Normal']
         font = style.font
         font.name = 'Ubuntu'
@@ -131,14 +129,11 @@ if uploaded_file is not None:
         
         total_sheets = len(sheet_names)
 
-        # Iterar por cada escenario (hoja del Excel)
         for index, sheet_name in enumerate(sheet_names):
-            status_text.write(f"Escribiendo tablas del Escenario: **{sheet_name}** ({index + 1}/{total_sheets})...")
-            
-            # Leer la hoja actual respetando el formato original
+            status_text.write(f"Procesando tablas del Escenario: **{sheet_name}**...")
             df_sheet = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             
-            # Ejecutar la separación horizontal exacta de tus bloques
+            # Ejecuta la separación y dibujo ordenado
             extraer_y_dibujar_bloques_reales(df_sheet, doc, sheet_name)
             
             if index < total_sheets - 1:
@@ -146,12 +141,11 @@ if uploaded_file is not None:
                 
             progress_bar.progress((index + 1) / total_sheets)
             
-        # Empaquetar para la descarga remota en memoria RAM
         docx_buffer = io.BytesIO()
         doc.save(docx_buffer)
         docx_buffer.seek(0)
         
-        status_text.success("✨ ¡El informe oficial con todas tus tablas se ha compilado con éxito!")
+        status_text.success("✨ ¡El informe con tus tablas nativas se ha compilado con éxito!")
         
         st.download_button(
             label="📥 Descargar Informe Word Oficial (.docx)",
