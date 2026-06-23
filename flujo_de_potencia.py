@@ -19,18 +19,20 @@ except Exception as e:
     st.error(f"Error al configurar la IA de Google: {e}")
 
 def analizar_escenario_con_ia(nombre_escenario, texto_tablas):
-    """Envía los datos de las tablas del escenario a Gemini"""
-    prompt = f"""
-    Actúa como un Ingeniero Senior de Planificación de Sistemas Eléctricos de Potencia.
-    Analiza el comportamiento operativo del escenario '{nombre_escenario}' basado en los datos de sus tablas de resultados:
+    prompt = f"""Actúa como un Ingeniero Senior de Planificación de Sistemas Eléctricos de Potencia.
+    Analiza el comportamiento operativo del escenario '{nombre_escenario}' basado estrictamente en los siguientes datos de tablas de resultados:
     
     {texto_tablas}
     
-    Genera un informe técnico estructurado para este escenario con dos secciones claras:
-    1. ANÁLISIS TÉCNICO COMPLETO: Evalúa la cargabilidad de líneas (MVA y kA), transformadores y perfiles de voltaje en barras (p.u.). Sé específico si detectas anomalías o instalaciones críticas.
-    2. CONCLUSIÓN DEL ESCENARIO: Resume de forma ejecutiva la condición operativa del sistema en este caso.
+    Instrucciones obligatorias de redacción:
+    1. Genera un único párrafo continuo de análisis técnico (prosa fluida).
+    2. Está estrictamente PROHIBIDO usar listas, viñetas, guiones, puntos apartes o clasificaciones.
+    3. Está estrictamente PROHIBIDO usar formato Markdown como negritas (no uses caracteres '**'), títulos o subtítulos (no uses '#').
+    4. El texto debe ser plano, directo, formal y puramente técnico.
+    5. No redactes ninguna conclusión para este escenario individual (la conclusión general se hará al final del documento).
+    6. Destaca únicamente los casos más representativos del escenario: menciona de forma corrida las líneas o transformadores con mayor cargabilidad (MVA, kA) y los perfiles de voltaje en barras (p.u.) más críticos.
     
-    Escribe directamente el análisis de forma fluida, profesional y formal. No agregues introducciones ni saludos.
+    Escribe directamente el párrafo de análisis técnico, sin introducciones, saludos, comentarios ni títulos de secciones.
     """
     try:
         response = model.generate_content(prompt)
