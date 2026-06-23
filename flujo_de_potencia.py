@@ -11,7 +11,7 @@ import google.generativeai as genai
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="wide")
 
-# --- 2. CONFIGURACIÓN DE LA IA ---
+# --- 2. CONFIGURACIÓN DE LA IA (PARCHE POR BUG DE INTERFAZ) ---
 if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -19,8 +19,18 @@ if "GEMINI_API_KEY" in st.secrets:
     except Exception as e:
         st.error(f"Error al configurar la IA: {e}")
 else:
-    st.error("❌ Falta GEMINI_API_KEY en los Secrets de Streamlit.")
-    st.stop()
+    # Plan B en pantalla si la interfaz de Streamlit Cloud no muestra la caja negra
+    api_key_manual = st.text_input("🔑 Streamlit Cloud está bugeado. Ingresa tu Gemini API Key manualmente aquí:", type="password")
+    if api_key_manual:
+        try:
+            genai.configure(api_key=api_key_manual)
+            model = genai.GenerativeModel('gemini-3-flash-preview')
+        except Exception as e:
+            st.error(f"Error con la clave ingresada: {e}")
+            st.stop()
+    else:
+        st.warning("⚠️ Por favor, ingresa la API Key para activar los análisis.")
+        st.stop()
 
 # --- 3. LÓGICA AUXILIAR DE PROCESAMIENTO ---
 def extraer_tablas_de_hoja(df):
@@ -66,7 +76,7 @@ if uploaded_file is not None:
         
         doc = Document()
         
-        # Configurar formato general solicitado: Fuente Ubuntu, Tamaño 18, Color #004C5F
+        # Configurar formato: Fuente Ubuntu, Tamaño 18, Color #004C5F
         style = doc.styles['Normal']
         font = style.font
         font.name = 'Ubuntu'
@@ -111,7 +121,7 @@ if uploaded_file is not None:
             1. Cargabilidad de Líneas (tanto en la tabla de MVA como en la de kA) y Transformadores: Deben ser inferiores o iguales al 100%. Reporta cualquier sobrecarga si los porcentajes superan este límite.
             2. Regulación de Tensión en Barras: En sistemas menores a 200 kV (como las redes de 110 kV presentes), la tensión bajo régimen estacionario (p.u.) debe mantenerse estrictamente entre 0.93 p.u. y 1.07 p.u.
             
-            Si todas las variables se encuentran en rangos de operation segura, confírmalo formalmente.
+            Si todas las variables se encuentran en rangos de operación segura, confírmalo formalmente.
             """
             
             try:
@@ -187,6 +197,10 @@ if uploaded_file is not None:
             data=docx_buffer,
             file_name="Informe_Tecnico_Flujo_de_Potencia.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+st.markdown("---")
+st.caption("© 2026 Plataforma Flujo de Potencia - Ingeniería Eléctrica")
         )
 
 st.markdown("---")
