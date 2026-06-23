@@ -1,94 +1,107 @@
 import streamlit as st
 import pandas as pd
 import io
-import os
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
-from html2image import Html2Image
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Plataforma Flujo de Potencia", page_icon="⚡", layout="wide")
 
-# Inicializar html2image de manera segura para entornos Linux/Nube
-hti = Html2Image(custom_flags=['--no-sandbox', '--disable-gpu', '--headless'])
-
-# --- 2. MOTOR DE CAPTURA VISUAL (REPLICA COPYPICTURE EN LINUX) ---
-def renderizar_bloque_a_imagen(df, keyword):
+# --- 2. LÓGICA DE EXTRACCIÓN HORIZONTAL Y DIBUJO DE TABLAS ---
+def extraer_y_dibujar_bloques_reales(df, doc, sheet_name):
     """
-    Busca el bloque horizontal en el Excel, genera un HTML idéntico a una tabla
-    de Excel con tus estilos corporativos, y le toma una captura de pantalla en la nube.
+    Busca de forma exacta las sub-tablas distribuidas horizontalmente en tu Excel
+    y las plasma en Word con el formato visual corporativo limpio.
     """
-    headers = df.columns.astype(str).tolist()
-    columnas_coincidentes = [col for col in headers if keyword in col]
+    azul_corporativo = RGBColor(0, 76, 95)
     
-    if not columnas_coincidentes:
-        return None
+    # Mapeo idéntico de palabras clave y sus títulos de tu macro de VBA
+    titleMapping = {
+        "Línea\n[MVA]": "Cargabilidad Líneas (MVA)",
+        "Línea\n[kA]": "Cargabilidad Líneas (kA)",
+        "Transformador": "Cargabilidad Transformadores",
+        "Barra": "Regulación de tensión"
+    }
+    
+    # Título principal del Escenario en el Word (Líneas 5-6 de tu VBA original)
+    p_title = doc.add_paragraph()
+    run_title = p_title.add_run(f"Resultados {sheet_name}")
+    run_title.font.size = Pt(18)
+    run_title.font.bold = True
+    run_title.font.name = 'Ubuntu'
+    run_title.font.color.rgb = azul_corporativo
+    
+    pPr = p_title._p.get_or_add_pPr()
+    pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
+    
+    # Analizar el archivo buscando cada bloque por su columna de inicio
+    for kw, titulo_tabla in titleMapping.items():
+        # Encontrar los índices de las columnas que contienen la palabra clave
+        columnas_bloque = [i for i, col in enumerate(df.columns) if kw in str(col)]
         
-    # Encontrar los límites horizontales del bloque (columna vacía)
-    idx_inicio = headers.index(columnas_coincidentes[0])
-    idx_fin = idx_inicio
-    while idx_fin < len(df.columns) and not df.iloc[:, idx_fin].isna().all():
-        idx_fin += 1
-        
-    df_bloque = df.iloc[:, idx_inicio:idx_fin].dropna(how='all').reset_index(drop=True)
-    if df_bloque.empty:
-        return None
-
-    # Reemplazar saltos de línea para el formato web
-    df_bloque.columns = [col.replace('\n', '<br>') for col in df_bloque.columns]
-
-    # CSS Estilo Planilla Excel Corporativa (Azul #004C5F)
-    html_style = """
-    <style>
-        table {
-            border-collapse: collapse;
-            font-family: 'Ubuntu', 'Segoe UI', Arial, sans-serif;
-            font-size: 12px;
-            width: auto;
-            margin: 5px;
-        }
-        th {
-            background-color: #004C5F;
-            color: white;
-            font-weight: bold;
-            border: 1px solid #a0a0a0;
-            padding: 6px 12px;
-            text-align: center;
-            white-space: nowrap;
-        }
-        td {
-            border: 1px solid #d3d3d3;
-            padding: 5px 10px;
-            color: #004C5F;
-            text-align: left;
-            white-space: nowrap;
-        }
-        tr:nth-child(even) {
-            background-color: #fcfcfc;
-        }
-    </style>
-    """
-    
-    html_tabla = df_bloque.to_html(index=False, escape=False)
-    html_completo = f"<html><head>{html_style}</head><body style='background-color:white; padding:10px;'>{html_tabla}</body></html>"
-    
-    nombre_imagen = f"tabla_{keyword.replace(chr(10), '_')}.png"
-    
-    # Calcular dimensiones dinámicas óptimas para evitar cortes en el recorte de la foto
-    ancho_estimado = max(len(df_bloque.columns) * 140, 400)
-    alto_estimado = (len(df_bloque) * 28) + 80
-    
-    try:
-        hti.screenshot(html_str=html_completo, save_as=nombre_imagen, size=(ancho_estimado, alto_estimado))
-        return nombre_imagen
-    except Exception:
-        return None
+        if columnas_bloque:
+            idx_inicio = columnas_bloque[0]
+            
+            # Un bloque dura horizontalmente hasta encontrar una columna vacía (NaN)
+            idx_fin = idx_inicio
+            while idx_fin < len(df.columns) and not df.iloc[:, idx_fin].isna().all():
+                idx_fin += 1
+                
+            # Extraer el trozo exacto de la tabla horizontal sin mezclar columnas ajenas
+            df_sub_tabla = df.iloc[:, idx_inicio:idx_fin].dropna(how='all').reset_index(drop=True)
+            
+            if not df_sub_tabla.empty:
+                # Título estilo CAPTION arriba de la tabla (Exactamente como tu macro)
+                p_nom = doc.add_paragraph()
+                run_nom = p_nom.add_run(f"Tabla: Resultados {titulo_tabla} - {sheet_name}")
+                run_nom.font.name = 'Ubuntu'
+                run_nom.font.size = Pt(11)
+                run_nom.font.bold = True
+                run_nom.font.color.rgb = azul_corporativo
+                
+                # Crear la tabla física en Word
+                tabla_word = doc.add_table(rows=len(df_sub_tabla) + 1, cols=len(df_sub_tabla.columns))
+                tabla_word.style = 'Table Grid'
+                
+                # 1. Escribir los encabezados reales de las columnas
+                for j, col_name in enumerate(df_sub_tabla.columns):
+                    cell = tabla_word.cell(0, j)
+                    cell.text = str(col_name).replace(chr(10), ' ')
+                    if cell.paragraphs[0].runs:
+                        run = cell.paragraphs[0].runs[0]
+                        run.font.name = 'Ubuntu'
+                        run.font.size = Pt(10)
+                        run.font.bold = True
+                        run.font.color.rgb = azul_corporativo
+                
+                # 2. Escribir las celdas de datos con formato numérico limpio
+                for i, row in enumerate(df_sub_tabla.itertuples(index=False)):
+                    for j, val in enumerate(row):
+                        cell = tabla_word.cell(i + 1, j)
+                        
+                        # Controlar el redondeo de decimales para evitar deformaciones
+                        if isinstance(val, float):
+                            if "p.u." in str(df_sub_tabla.columns[j]) or "Tensión" in str(df_sub_tabla.columns[j]):
+                                cell.text = f"{val:.1f}"  # 1 decimal para tensiones
+                            else:
+                                cell.text = f"{val:.2f}"  # 2 decimales para cargabilidades
+                        else:
+                            cell.text = str(val) if pd.notna(val) else ""
+                            
+                        if cell.paragraphs[0].runs:
+                            run_cell = cell.paragraphs[0].runs[0]
+                            run_cell.font.name = 'Ubuntu'
+                            run_cell.font.size = Pt(10)
+                            run_cell.font.color.rgb = azul_corporativo
+                            
+                # Espacio de separación después de cada bloque de tabla
+                doc.add_paragraph()
 
 # --- 3. INTERFAZ DE USUARIO ---
 st.title("⚡ Plataforma Flujo de Potencia")
-st.write("Generador automático de reportes. Extrae rangos horizontales y los pega en Word como capturas de alta definición.")
+st.write("Extractor automático de simulación. Organiza los bloques horizontales directamente en tu Word oficial.")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("Selecciona el archivo Excel de Resultados (EFP_RES_...)", type=["xlsx"])
@@ -106,7 +119,7 @@ if uploaded_file is not None:
         
         doc = Document()
         
-        # Formato de texto base
+        # Formato de texto base por defecto
         style = doc.styles['Normal']
         font = style.font
         font.name = 'Ubuntu'
@@ -117,62 +130,28 @@ if uploaded_file is not None:
         status_text = st.empty()
         
         total_sheets = len(sheet_names)
-        
-        # Mapeo de nombres como los tenías en tu macro original
-        titleMapping = {
-            "Línea\n[MVA]": "Cargabilidad Líneas (MVA)",
-            "Línea\n[kA]": "Cargabilidad Líneas (kA)",
-            "Transformador": "Cargabilidad Transformadores",
-            "Barra": "Regulación de tensión"
-        }
 
+        # Iterar por cada escenario (hoja del Excel)
         for index, sheet_name in enumerate(sheet_names):
-            status_text.write(f"Capturando tablas del Escenario: **{sheet_name}** ({index + 1}/{total_sheets})...")
+            status_text.write(f"Escribiendo tablas del Escenario: **{sheet_name}** ({index + 1}/{total_sheets})...")
             
-            # Título principal del escenario en Word (Líneas 5-6 de tu VBA)
-            p_title = doc.add_paragraph()
-            run_title = p_title.add_run(f"Resultados {sheet_name}")
-            run_title.font.size = Pt(18)
-            run_title.font.bold = True
-            run_title.font.name = 'Ubuntu'
-            run_title.font.color.rgb = RGBColor(0, 76, 95)
-            
-            pPr = p_title._p.get_or_add_pPr()
-            pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFFFFF"/>'))
-            
+            # Leer la hoja actual respetando el formato original
             df_sheet = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             
-            # Buscar cada una de tus tablas
-            for kw, titulo_tabla in titleMapping.items():
-                img_file = renderizar_bloque_a_imagen(df_sheet, kw)
-                
-                if img_file and os.path.exists(img_file):
-                    # Título de la tabla en estilo Caption arriba de la imagen
-                    p_cap = doc.add_paragraph()
-                    run_cap = p_cap.add_run(f"Tabla: Resultados {titulo_tabla} - {sheet_name}")
-                    run_cap.font.name = 'Ubuntu'
-                    run_cap.font.size = Pt(11)
-                    run_cap.font.bold = True
-                    run_cap.font.color.rgb = RGBColor(0, 76, 95)
-                    
-                    # Pegar la imagen fija en el documento Word
-                    doc.add_picture(img_file)
-                    doc.add_paragraph() # Espacio inferior
-                    
-                    # Borrar archivo temporal de imagen de la memoria del servidor
-                    os.remove(img_file)
+            # Ejecutar la separación horizontal exacta de tus bloques
+            extraer_y_dibujar_bloques_reales(df_sheet, doc, sheet_name)
             
             if index < total_sheets - 1:
                 doc.add_page_break()
                 
             progress_bar.progress((index + 1) / total_sheets)
             
-        # Preparar descarga
+        # Empaquetar para la descarga remota en memoria RAM
         docx_buffer = io.BytesIO()
         doc.save(docx_buffer)
         docx_buffer.seek(0)
         
-        status_text.success("✨ ¡El reporte con tus capturas fijas ha sido generado con éxito en la nube!")
+        status_text.success("✨ ¡El informe oficial con todas tus tablas se ha compilado con éxito!")
         
         st.download_button(
             label="📥 Descargar Informe Word Oficial (.docx)",
